@@ -1,10 +1,4 @@
 {
-  "crons": [
-    {
-      "path": "/api/scan",
-      "schedule": "0 2-8 * * 1-5"
-    }
-  ],
   "routes": [
     {
       "src": "/api/webhook",
