@@ -212,21 +212,24 @@ def detect_signals(candles, symbol, config=None):
     return signals
 
 # ============ TELEGRAM ============
-def send_message(text):
-    if not TOKEN or not CHAT_ID:
-        print("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID")
+# ============ TELEGRAM ============
+def send_message(text, chat_id=None):
+    """Gửi tin nhắn. Nếu không có chat_id thì dùng CHAT_ID mặc định (cho cron scan)"""
+    target = chat_id or CHAT_ID
+    if not TOKEN or not target:
+        print("Missing TELEGRAM_BOT_TOKEN or CHAT_ID")
         return False
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     try:
-        resp = requests.post(url, json={"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=10)
+        resp = requests.post(url, json={"chat_id": target, "text": text, "parse_mode": "HTML"}, timeout=10)
         return resp.status_code == 200
     except Exception as e:
         print(f"Telegram error: {e}")
         return False
 
-def send_alert(symbol, signal):
+def send_alert(symbol, signal, chat_id=None):
     msg = f"{signal['emoji']} <b>CẢNH BÁO KỸ THUẬT</b> {signal['emoji']}\n\n{signal['text']}\n\n⏰ {datetime.now().strftime('%H:%M %d/%m/%Y')}"
-    send_message(msg)
+    send_message(msg, chat_id)
 
 # ============ HANDLER ============
 class handler(BaseHTTPRequestHandler):
@@ -286,7 +289,7 @@ class handler(BaseHTTPRequestHandler):
                 
                 for sig in signals:
                     if not already_alerted(symbol, sig["type"]):
-                        send_alert(symbol, sig)
+                        send_alert(symbol, sig, CHAT_ID)
                         save_alert(symbol, sig["type"])
                         alerts_sent += 1
             except Exception as e:
@@ -334,7 +337,7 @@ class handler(BaseHTTPRequestHandler):
         except Exception as e:
             self._json(500, {"error": str(e), "trace": traceback.format_exc()})
     
-    def _do_webhook(self):
+        def _do_webhook(self):
         content_len = int(self.headers.get('Content-Length', 0))
         post_body = self.rfile.read(content_len)
         
@@ -345,14 +348,23 @@ class handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         
-        if "message" not in data or "text" not in data["message"]:
+        # Lấy message từ private chat hoặc group/channel
+        msg_data = data.get("message") or data.get("channel_post")
+        if not msg_data or "text" not in msg_data:
             self.send_response(200)
             self.end_headers()
             return
         
-        text = data["message"]["text"].strip()
+        chat_id = msg_data["chat"]["id"]
+        text = msg_data["text"].strip()
         parts = text.split()
         cmd = parts[0].lower()
+        
+        # Lọc: chỉ phản hồi nếu là lệnh (bắt đầu bằng /)
+        if not cmd.startswith("/"):
+            self.send_response(200)
+            self.end_headers()
+            return
         
         try:
             if cmd == "/start":
@@ -366,29 +378,29 @@ class handler(BaseHTTPRequestHandler):
 /indicators — Cấu hình chỉ báo
 /on INDICATOR — Bật
 /off INDICATOR — Tắt
-/help — Trợ giúp""")
+/help — Trợ giúp""", chat_id)
             
             elif cmd == "/help":
-                send_message("📋 Gõ /add VCB để thêm. Gõ /check VCB để kiểm tra. Gõ /list để xem danh sách.")
+                send_message("📋 Gõ /add VCB để thêm. Gõ /check VCB để kiểm tra. Gõ /list để xem danh sách.", chat_id)
             
             elif cmd == "/list":
                 wl = get_watchlist()
                 msg = f"📋 <b>Watchlist</b> ({len(wl)} mã):\n" + "\n".join([f"• {s}" for s in wl])
-                send_message(msg)
+                send_message(msg, chat_id)
             
             elif cmd == "/add" and len(parts) > 1:
                 add_to_watchlist(parts[1])
-                send_message(f"✅ Đã thêm <b>{parts[1].upper()}</b>")
+                send_message(f"✅ Đã thêm <b>{parts[1].upper()}</b>", chat_id)
             
             elif cmd == "/del" and len(parts) > 1:
                 remove_from_watchlist(parts[1])
-                send_message(f"🗑️ Đã xóa <b>{parts[1].upper()}</b>")
+                send_message(f"🗑️ Đã xóa <b>{parts[1].upper()}</b>", chat_id)
             
             elif cmd == "/check" and len(parts) > 1:
                 symbol = parts[1].upper()
                 candles = get_ohlcv(symbol, resolution="1H", days_back=60)
                 if not candles or len(candles) < 200:
-                    send_message(f"❌ Không đủ dữ liệu <b>{symbol}</b>")
+                    send_message(f"❌ Không đủ dữ liệu <b>{symbol}</b>", chat_id)
                 else:
                     candles = calculate_indicators(candles)
                     config = get_indicators_config()
@@ -410,27 +422,27 @@ class handler(BaseHTTPRequestHandler):
                     else:
                         lines.append("\n✅ Không có tín hiệu.")
                     
-                    send_message("\n".join(lines))
+                    send_message("\n".join(lines), chat_id)
             
             elif cmd == "/indicators":
                 cfg = get_indicators_config()
                 lines = ["⚙️ <b>Chỉ báo:</b>"]
                 for k, v in cfg.items():
                     lines.append(f"{'🟢' if v else '🔴'} {k}: {'BẬT' if v else 'TẮT'}")
-                send_message("\n".join(lines))
+                send_message("\n".join(lines), chat_id)
             
             elif cmd == "/on" and len(parts) > 1:
                 toggle_indicator(parts[1].upper(), True)
-                send_message(f"🟢 Bật <b>{parts[1].upper()}</b>")
+                send_message(f"🟢 Bật <b>{parts[1].upper()}</b>", chat_id)
             
             elif cmd == "/off" and len(parts) > 1:
                 toggle_indicator(parts[1].upper(), False)
-                send_message(f"🔴 Tắt <b>{parts[1].upper()}</b>")
+                send_message(f"🔴 Tắt <b>{parts[1].upper()}</b>", chat_id)
             
             else:
-                send_message(f"Không hiểu: <b>{text}</b>\nGõ /help")
+                send_message(f"Không hiểu: <b>{text}</b>\nGõ /help", chat_id)
         except Exception as e:
-            send_message(f"❌ Lỗi: {str(e)}")
+            send_message(f"❌ Lỗi: {str(e)}", chat_id)
         
         self.send_response(200)
         self.end_headers()
