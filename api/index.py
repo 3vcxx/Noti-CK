@@ -16,7 +16,7 @@ CRON_SECRET = os.environ.get("CRON_SECRET")
 DEFAULT_WATCHLIST = ["VCB", "VIC", "VNM", "FPT", "HPG", "GAS", "GVR", "SSI", "MSN", "MWG"]
 BASE_URL = "https://api.24hmoney.vn/trading-view/api/public/history"
 
-# ============ REDIS HELPERS ============
+# ============ REDIS ============
 def _get_redis():
     if not REDIS_URL:
         raise ValueError("REDIS_URL not set")
@@ -212,9 +212,7 @@ def detect_signals(candles, symbol, config=None):
     return signals
 
 # ============ TELEGRAM ============
-# ============ TELEGRAM ============
 def send_message(text, chat_id=None):
-    """Gửi tin nhắn. Nếu không có chat_id thì dùng CHAT_ID mặc định (cho cron scan)"""
     target = chat_id or CHAT_ID
     if not TOKEN or not target:
         print("Missing TELEGRAM_BOT_TOKEN or CHAT_ID")
@@ -231,7 +229,7 @@ def send_alert(symbol, signal, chat_id=None):
     msg = f"{signal['emoji']} <b>CẢNH BÁO KỸ THUẬT</b> {signal['emoji']}\n\n{signal['text']}\n\n⏰ {datetime.now().strftime('%H:%M %d/%m/%Y')}"
     send_message(msg, chat_id)
 
-# ============ HANDLER ============
+# ============ HANDLER — TOP LEVEL ============
 class handler(BaseHTTPRequestHandler):
     def _json(self, status, data):
         self.send_response(status)
@@ -337,7 +335,7 @@ class handler(BaseHTTPRequestHandler):
         except Exception as e:
             self._json(500, {"error": str(e), "trace": traceback.format_exc()})
     
-        def _do_webhook(self):
+    def _do_webhook(self):
         content_len = int(self.headers.get('Content-Length', 0))
         post_body = self.rfile.read(content_len)
         
@@ -348,7 +346,6 @@ class handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         
-        # Lấy message từ private chat hoặc group/channel
         msg_data = data.get("message") or data.get("channel_post")
         if not msg_data or "text" not in msg_data:
             self.send_response(200)
@@ -360,7 +357,6 @@ class handler(BaseHTTPRequestHandler):
         parts = text.split()
         cmd = parts[0].lower()
         
-        # Lọc: chỉ phản hồi nếu là lệnh (bắt đầu bằng /)
         if not cmd.startswith("/"):
             self.send_response(200)
             self.end_headers()
