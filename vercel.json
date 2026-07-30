@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "functions": {
+    "api/scan.py": {
+      "maxDuration": 10
+    },
+    "api/webhook.py": {
+      "maxDuration": 10
+    }
+  }
+}
